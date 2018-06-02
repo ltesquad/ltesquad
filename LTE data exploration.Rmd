@@ -1,0 +1,194 @@
+---
+title: "LTE Exploration"
+author: "Ahmed Tarek Sayed"
+date: "June 1, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+importing Libraries
+```{r}
+library(tidyverse)
+library(Amelia)
+library(readxl)
+```
+Reading updated version
+```{r}
+X4G <- read_csv("E:/Academic/ITI/PROJECT/project network/lte/Data/DataSet/4G dataset updated(KPI Analysis Result).csv", 
+    col_types = cols(`Cell FDD TDD Indication` = col_skip(), 
+        Date = col_datetime(format = "%m/%d/%Y %H:%M"), 
+        Integrity = col_skip(), L.ChMeas.RI.Rank3 = col_integer(), `(HU) Average UE Number` = col_double(),
+        L.ChMeas.RI.Rank4 = col_integer(), 
+        `LocalCell Id` = col_skip(), `eNodeB Function Name` = col_skip(), 
+        `eNodeB Name` = col_skip()))
+glimpse(X4G)
+
+LTE <- X4G
+```
+
+
+Importing Data Set
+
+```{r}
+#LTE <- read_csv("E:/Academic/ITI/PROJECT/project network/lte/Data/Mod Data/LTE dataset (CSV).csv", 
+ #   col_types = cols(Date = col_datetime(format = "%m/%d/%Y %H:%M")))
+```
+Checking Nulls
+
+```{r}
+missmap(LTE)
+```
+
+```{r}
+LTE
+```
+Selecting and renamming Variables
+```{r}
+#LTE <- LTE %>% select(Date, `Cell Name`,`(HU) Average CQI Per Cell`, `(HU) Average UE Number`, `(HU) User DL Average Throughput (Mbps)`, `(HU) DL Traffic Volume (MB)`, `(HU) UL Traffic Volume (MB)`, `(HU) User UL Average Throughput (Mbps)`, `(HU) DL PRB Utilization(%)`, starts_with('L.RA'))
+
+LTE <- LTE %>% rename(CQI = `(HU) Average CQI Per Cell`,avg_ue = `(HU) Average UE Number`,avg_dl_cell_throughput = `(HU) Cell DL Average Throughput (Mbps)`,avg_dl_user_throughput = `(HU) User DL Average Throughput (Mbps)`,avg_ul_user_throughput = `(HU) User UL Average Throughput (Mbps)`,dl_traffic = `(HU) DL Traffic Volume (MB)`,ul_traffic = `(HU) UL Traffic Volume (MB)`,ul_traffic = `(HU) UL Traffic Volume (MB)`,avg_ul_user_throughput = `(HU) User UL Average Throughput (Mbps)`,prb_utilization = `(HU) DL PRB Utilization(%)`, avg_mcs = `(HU)Avg MCS`)
+
+LTE
+```
+
+
+
+Checking the other variables where CQI is null
+```{r}
+LTE %>% filter(is.na(CQI))  %>% summary()
+```
+How many are they ?
+
+```{r}
+LTE %>% filter(is.na(CQI)) %>% summarise(n())
+```
+
+All vars are either 0 or NA where CQI is null except for Prb which shows a very low values (Clearly beacaus it is not utilized)
+How about when there is no nulls
+```{r}
+
+LTE %>% filter(!is.na(CQI))  %>% summary()
+```
+Clearly the prb has increased once the CQI is not null (the cell is active) and other variables carry a representable number
+Checking if ever variables carry 0 value similtinously (Which may indicates also a non functioning cell)
+```{r}
+LTE %>% filter(CQI ==0,avg_ue == 0, avg_dl_user_throughput == 0 ) %>% summarise(n())
+```
+
+Now I can remove nulls confidently that they have no value and no other condition may indicate a non functioning cell that can corrupt our model
+
+```{r}
+LTE <- LTE %>% filter(!is.na(CQI))
+```
+Lets see how many rows remaining
+```{r}
+length(LTE$CQI)
+```
+Convient amount representing 99.999% of the data
+
+```{r}
+summary(LTE)
+```
+
+
+
+Lets look at our target variable
+
+from the summary we can see that
+it is a little right skewed means that there is users in some cells gets a extremly high avg throughput
+OK lets look
+```{r}
+LTE %>% ggplot(aes(x = avg_dl_user_throughput)) + geom_histogram(aes(y = ..density.., fill = ..count..)) + stat_function(fun = dnorm,color = 'red' ,args = list(mean = mean(LTE$avg_dl_user_throughput, na.rm = T),sd= sd(LTE$avg_dl_user_throughput, na.rm = T)))
+```
+Using log the variable
+```{r}
+LTE %>% ggplot(aes(x = log(avg_dl_user_throughput))) + geom_histogram(aes(y = ..density.., fill = ..count..)) + stat_function(fun = dnorm,color = 'red' ,args = list(mean = log(mean(LTE$avg_dl_user_throughput, na.rm = T))),sd= sd(log(LTE$avg_dl_user_throughput), na.rm = T))
+```
+Note to self:-
+(I have a question regarding the Avg ue, What is the granular time windiw that is avereged for each hour ?)
+unpivot and see what is the most used distance from indexes
+use standard deviasio as a method of detcting abnormalty (after applying significant groupping)
+
+#Now Lets see what are those extreme cells ? are the distribution of avg user throughput related to certain mode of transmission and reception or even the band ?
+importing and joining the LTE join the data sets to see
+```{r}
+LTE_cells <- read_excel("E:/Academic/ITI/PROJECT/project network/lte/Data/DataSet/LTE cells.xlsx")
+LTE_cells <- LTE_cells %>% rename(`Cell Name` = `*Cell Name`)
+
+LTE_det <- left_join(LTE, LTE_cells)
+LTE_det <-  LTE_det %>% rename(band = `*Downlink bandwidth`, trans_recep_mode = `*Cell transmission and reception mode`)
+```
+Making sure of complete join
+```{r}
+LTE_det %>%  filter(is.na(band) & is.na(trans_recep_mode))%>% summarise(n_distinct(`Cell Name`), n())
+```
+There is 226 cell without a refrence in LTE_cells reprsenting 4225 instance
+
+#Now seeing if the Cell band affects the throughput
+```{r}
+LTE_det %>% group_by(band) %>% summarise(mean(avg_dl_user_throughput, na.rm = T), n(), sd(avg_dl_user_throughput, na.rm = T))
+```
+
+```{r}
+LTE_det %>% ggplot(aes(x = log(avg_dl_user_throughput))) + geom_histogram(aes(fill = LTE_det$band))
+```
+
+
+
+```{r}
+LTE_det %>% ggplot(aes(x= band, y = avg_dl_user_throughput)) + geom_boxplot()
+```
+
+making annova to see diffrence
+
+```{r}
+LTE_fin <- LTE_det %>% filter(is.finite(log(avg_dl_user_throughput)))
+aov_band <- aov(data = LTE_fin, log(LTE_fin$avg_dl_user_throughput) ~ LTE_fin$band)
+
+summary(aov_band)
+```
+
+```{r}
+TukeyHSD(aov_band)
+```
+Checjing homogenicity  of variance
+```{r}
+plot(aov_band,1)
+plot(aov_band,2)
+
+```
+
+We can now conclode that :-
+All bands are significantly diffrent from each other except for N75 and N50 which can be interpreted as one
+
+Does the mode affets with the band
+
+```{r}
+
+LTE_det %>% ggplot(aes(x= trans_recep_mode, y = avg_dl_user_throughput)) + geom_boxplot()
+```
+The  N75 band has only one trans mode (1T1R) which may explain why N75 is not diffrent from N50 despite the higher technology used
+
+Now seeing if the trans mode make differ
+
+```{r}
+aov_trans <- aov(data = LTE_fin, log(LTE_fin$avg_dl_user_throughput) ~ LTE_fin$trans_recep_mode)
+
+summary(aov_trans)
+```
+
+
+```{r}
+TukeyHSD(aov_trans)
+```
+We can see that 4T4R doesnot differ from 2T4R and 1T2R is lower than 1T1R
+
+Joining the region table to see if the region or subregion affects
+
+```{r}
+
+```
+
