@@ -14,6 +14,8 @@ importing Libraries
 library(tidyverse)
 library(Amelia)
 library(readxl)
+library(PerformanceAnalytics)
+library(ggcorrplot)
 ```
 Reading updated version
 ```{r}
@@ -131,7 +133,7 @@ There is 226 cell without a refrence in LTE_cells reprsenting 4225 instance
 ```{r}
 LTE_det %>% group_by(band) %>% summarise(mean(avg_dl_user_throughput, na.rm = T), n_distinct(`Cell Name`), sd(avg_dl_user_throughput, na.rm = T))
 ```
-Notice that the N50 band has the highest standard deviasion in all bands 
+Notice that the N50 band has the highest standard deviasion in all bands
 ```{r}
 LTE_det %>% ggplot(aes(x = log(avg_dl_user_throughput))) + geom_histogram(aes(fill = LTE_det$band))
 ```
@@ -194,10 +196,122 @@ LTE_det %>% ggplot(aes(y= avg_dl_user_throughput, x = band)) + geom_boxplot(aes(
 ```{r}
 LTE_det %>% group_by(band, trans_recep_mode) %>%  summarise(mean(avg_dl_user_throughput, na.rm = T), n_distinct(`Cell Name`), sd(avg_dl_user_throughput, na.rm = T))
 ```
+##We can see that the increased sd is Mainly band related not a trans mode related
+
 
 Joining the region table to see if the region or subregion affects
 
 ```{r}
+region <- read_excel("E:/Academic/ITI/PROJECT/project network/lte/Data/DataSet/sub-region.xlsx", 
+    col_types = c("text", "blank", "blank", 
+        "blank", "blank", "blank", "text", 
+        "text", "text", "blank"))
+LTE_det<-  LTE_det %>% select(-`*eNodeB Name`, -`Cell active state`, -L.RA.TA.UE.Index10, -L.RA.TA.UE.Index11, -L.RA.TA.UE.Index11,-L.RA.TA.UE.Index8, -L.RA.TA.UE.Index9)
+region <- region %>% rename(`Cell Name` = CELL)
+LTE_det <- left_join(LTE_det, region )
+```
+Note to self:-
+Does the indeces and no of ue rsemblant?
+Does the the indices whn weighted is more correlated to throughput ?
 
+Now seeing the un joined
+```{r}
+LTE_det %>% filter(is.na(Region)) %>% summarise(no_region_instances = n(), no_region_cells = n_distinct(`Cell Name`))
 ```
 
+```{r}
+missmap(LTE_det)
+```
+Now all the missing instances represents 1% of the data
+
+Now lets see if the throghuput differ from region to another
+
+```{r}
+LTE_det %>% group_by(Region) %>% summarise(mean(avg_dl_user_throughput, na.rm = T), n_distinct(`Cell Name`), sd(avg_dl_user_throughput, na.rm = T))
+```
+
+```{r}
+LTE_det %>% ggplot(aes(Region,avg_dl_user_throughput)) + geom_boxplot()
+```
+
+a diffrence is clear but is it the region or just the distribution of technologies across the regions ?
+```{r}
+LTE_det %>% ggplot(aes(Region,avg_dl_user_throughput)) +geom_boxplot(aes(color = LTE_det$band ))
+```
+ 
+It looks like regardless of the band the diffrent regions has a diffrent throughput
+
+Lets look at the ue traffic in the region if it what makes the diffrence ?
+```{r}
+LTE_det %>% ggplot(aes(Region,avg_ue)) + geom_boxplot() + ylim(NA, 100)
+```
+ Looks like the avg UE per cell does not differ across regions except for alexandriawhich shows a much lower avg ue
+ 
+```{r}
+LTE_det %>% ggplot(aes(Region,LTE_det$dl_traffic)) +geom_boxplot() + ylim(NA,10000 )
+```
+ What I can conclude is that Alexandria has the lowest avg traffic and UE number which can contribute to its high throughput
+ 
+ Delta is showing a strange behaviour that regardless of the relatively low traffic and avg UE the throughput is low, Which may be caused by using only N25 band in delta and no other technology
+ 
+ Testing regions diffrence
+```{r}
+aov_reg <- aov(data = LTE_det, LTE_det$avg_dl_user_throughput ~ LTE_det$Region*LTE_det$band)
+
+summary(aov_reg)
+```
+ 
+```{r}
+TukeyHSD(aov_reg)
+```
+ There is a statistical diffrence across all regions except for the upper-egypt and canal
+ 
+ Discarding Upload link related variables
+```{r}
+LTE_det <- LTE_det %>% select(-avg_dl_cell_throughput, -ul_traffic, -avg_ul_user_throughput)
+```
+ 
+ Now lets look at the numerical variables and how they contribute to  the throughput and UE and Traffic
+ 
+```{r}
+tokeep <- which(sapply(LTE_det,is.numeric))
+corr <- round(cor(LTE_det[complete.cases(LTE_det),tokeep]),1)
+ggcorrplot(corr, hc.order = TRUE,  lab = TRUE)
+```
+Removing all nulls from the data set
+
+```{r}
+LTE_det <- LTE_det[complete.cases(LTE_det),]
+```
+
+
+```{r}
+cor(LTE_det$avg_dl_user_throughput, LTE_det$dl_traffic)
+```
+```{r}
+cor(LTE_det$avg_dl_user_throughput, LTE_det$avg_ue)
+```
+
+avg UE has a correlation of -0.3 to throughput and avg traffic is -0.1 which is very low correlation
+
+
+Can we derive a new variable that is the the traffic per user Will it be more relvant 
+```{r}
+LTE_det$traf_user_rat = LTE_det$dl_traffic / LTE_det$avg_ue
+cor(LTE_det$avg_dl_user_throughput, LTE_det$traf_user_rat)
+LTE_det <- LTE_det %>% select(-traf_user_rat)
+```
+Shown a lower correlation to our throughput variable than the avg_ue
+
+How about weighting the indexes and see if the weighted sum is more correlated than each and avg ue to both traffic and throughput
+```{r}
+LTE_det$wted_index = LTE_det$L.RA.TA.UE.Index0*78 + LTE_det$L.RA.TA.UE.Index1*273 + LTE_det$L.RA.TA.UE.Index2 * 390 + LTE_det$L.RA.TA.UE.Index3 * 603 + LTE_det$L.RA.TA.UE.Index4 *1532 + LTE_det$L.RA.TA.UE.Index5 * 2730 + LTE_det$L.RA.TA.UE.Index6 * 5070 + LTE_det$L.RA.TA.UE.Index7 * 10530
+```
+
+```{r}
+tokeep <- which(sapply(LTE_det,is.numeric))
+corr <- round(cor(LTE_det[complete.cases(LTE_det),tokeep]),1)
+ggcorrplot(corr, hc.order = TRUE,  lab = TRUE)
+```
+
+ 
