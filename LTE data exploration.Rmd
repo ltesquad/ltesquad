@@ -129,9 +129,9 @@ There is 226 cell without a refrence in LTE_cells reprsenting 4225 instance
 
 #Now seeing if the Cell band affects the throughput
 ```{r}
-LTE_det %>% group_by(band) %>% summarise(mean(avg_dl_user_throughput, na.rm = T), n(), sd(avg_dl_user_throughput, na.rm = T))
+LTE_det %>% group_by(band) %>% summarise(mean(avg_dl_user_throughput, na.rm = T), n_distinct(`Cell Name`), sd(avg_dl_user_throughput, na.rm = T))
 ```
-
+Notice that the N50 band has the highest standard deviasion in all bands 
 ```{r}
 LTE_det %>% ggplot(aes(x = log(avg_dl_user_throughput))) + geom_histogram(aes(fill = LTE_det$band))
 ```
@@ -185,6 +185,15 @@ summary(aov_trans)
 TukeyHSD(aov_trans)
 ```
 We can see that 4T4R doesnot differ from 2T4R and 1T2R is lower than 1T1R
+
+Lets see both the band and the trans mode
+```{r}
+LTE_det %>% ggplot(aes(y= avg_dl_user_throughput, x = band)) + geom_boxplot(aes(color = trans_recep_mode))
+```
+
+```{r}
+LTE_det %>% group_by(band, trans_recep_mode) %>%  summarise(mean(avg_dl_user_throughput, na.rm = T), n_distinct(`Cell Name`), sd(avg_dl_user_throughput, na.rm = T))
+```
 
 Joining the region table to see if the region or subregion affects
 
